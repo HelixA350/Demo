@@ -14,26 +14,27 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
     # OpenAI
-    openai_api_key: str
-    openai_chat_model: str = "gpt-4o"
-    openai_embedding_model: str = "text-embedding-3-small"
-    openai_whisper_model: str = "whisper-1"
+    openai_api_key: str                                     # Ключ для API OpenAI
+    openai_base_url: str = "https://api.openai.com/v1"      # Базовый URL API, для использования разных моделей через совместимость с OpenAI API
+    openai_chat_model: str = "gpt-4o"                       # Модель LLM
+    openai_embedding_model: str = "text-embedding-3-small"  # Модель векторизации
+    openai_whisper_model: str = "whisper-1"                 # Модель транскрибации
+    openai_max_tokens: int = 1024                           # Максимум токенов в ответе ИИ
 
     # Database
-    database_url: str
+    database_url: str                                       # URL для подключения к базе данных
 
     # Redis
-    redis_url: str = "redis://redis:6379/0"
-    # TTL сессионного кэша (пара user_id → api_key_hash) в секундах
-    auth_cache_ttl: int = 900  # 15 минут
+    redis_url: str = "redis://redis:6379/0"                 # URL для подключения к Redis
+    auth_cache_ttl: int = 900  # 15 минут                   # Время хранения кэша авторизации
 
     # Security
     secret_key: str
 
     # App
-    vectorstore_path: str = "./vectorstore"
-    document_path: str = "./data/document.pdf"
-    memory_window_size: int = 10
+    vectorstore_path: str = "./vectorstore"                 # Путь к векторному хранилищу
+    document_path: str = "./data/document.pdf"              # Путь к документу для базы знаний
+    memory_window_size: int = 5                             # Хранимое количество пар сообщений в истории диалога
 
 
 @lru_cache

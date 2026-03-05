@@ -65,7 +65,7 @@ async def add_messages_with_trim(
     # Добавляем новую пару
     await history.aadd_messages([human_message, ai_message])
 
-    # Обрезаем: оставляем последние 2*k сообщений
+    # Обрезаем: оставляем последние 2*memory_window_size сообщений
     max_messages = settings.memory_window_size * 2
     messages: list[BaseMessage] = await history.aget_messages()
 
