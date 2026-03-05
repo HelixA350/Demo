@@ -1,0 +1,15 @@
+fastapi>=0.111
+uvicorn[standard]>=0.29
+langchain>=0.1.0
+langchain-openai>=0.1.0
+langchain-community>=0.0.38
+langchain-text-splitters>=0.0.1
+faiss-cpu>=1.8
+openai>=1.30
+sqlalchemy[asyncio]>=2.0
+asyncpg>=0.29
+alembic>=1.13
+bcrypt>=4.1
+python-multipart>=0.0.9
+pydantic-settings>=2.2
+pypdf>=4.0
