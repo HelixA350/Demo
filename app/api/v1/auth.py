@@ -22,16 +22,19 @@ async def register(
     session: AsyncSession = Depends(get_db_session),
 ) -> RegisterResponse:
     """
-    Регистрирует нового пользователя и возвращает API-ключ.
+    Регистрирует нового пользователя.
 
-    Ключ показывается только один раз. Сохраните его.
+    Возвращает user_id и API-ключ. Сохраните оба — они используются
+    как пара при каждом запросе (X-User-ID + X-API-Key).
+    Ключ показывается только один раз.
     """
     raw_key, hashed_key, prefix = generate_api_key()
-    await create_user(session, api_key_hash=hashed_key, api_key_prefix=prefix)
+    user = await create_user(session, api_key_hash=hashed_key, api_key_prefix=prefix)
 
-    logger.info("Зарегистрирован новый пользователь с префиксом: %s", prefix)
+    logger.info("Зарегистрирован новый пользователь: id=%s, prefix=%s", user.id, prefix)
 
     return RegisterResponse(
+        user_id=str(user.id),
         api_key=raw_key,
-        message="Сохраните ключ, он больше не будет показан.",
+        message="Сохраните user_id и api_key — они больше не будут показаны вместе.",
     )

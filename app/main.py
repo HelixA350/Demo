@@ -4,7 +4,6 @@
 
 import logging
 import logging.config
-
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
@@ -14,6 +13,7 @@ from fastapi.responses import JSONResponse
 
 from app.api.v1 import auth, chat
 from app.config import get_settings
+from app.core.redis_client import create_redis_client
 from app.exceptions import AppError
 from app.vectorstore.loader import load_vectorstore
 
@@ -42,6 +42,7 @@ LOGGING_CONFIG: dict = {
 logging.config.dictConfig(LOGGING_CONFIG)
 logger = logging.getLogger(__name__)
 
+
 # ─── Lifespan ─────────────────────────────────────────────────────────────────
 
 
@@ -51,13 +52,21 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     settings = get_settings()
     logger.info("Запуск приложения...")
 
-    # Загружаем FAISS-индекс в память
+    # Подключение к Redis
+    redis_client = await create_redis_client()
+    application.state.redis = redis_client
+    logger.info("Redis подключён.")
+
+    # Загрузка FAISS-индекса в память
     vectorstore = load_vectorstore(settings.vectorstore_path, settings.openai_embedding_model)
     application.state.vectorstore = vectorstore
     logger.info("FAISS-индекс успешно загружен.")
 
     yield
 
+    # Завершение работы
+    await redis_client.aclose()
+    logger.info("Соединение с Redis закрыто.")
     logger.info("Завершение работы приложения.")
 
 
@@ -66,11 +75,14 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
 app = FastAPI(
     title="AI Consultant API",
     version="1.0.0",
-    description="ИИ-консультант на основе документа с поддержкой текста, аудио и изображений.",
+    description=(
+        "ИИ-консультант на основе документа. "
+        "Поддерживает текстовые, аудио и визуальные запросы. "
+        "Авторизация: заголовки X-User-ID + X-API-Key."
+    ),
     lifespan=lifespan,
 )
 
-# Роутеры
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(chat.router, prefix="/api/v1/chat", tags=["chat"])
 

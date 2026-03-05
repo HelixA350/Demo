@@ -22,7 +22,7 @@ async def create_user(
     Args:
         session: асинхронная сессия БД.
         api_key_hash: bcrypt-хеш API-ключа.
-        api_key_prefix: префикс ключа для поиска.
+        api_key_prefix: префикс ключа для отображения.
 
     Returns:
         Созданный объект User.
@@ -34,15 +34,41 @@ async def create_user(
     return user
 
 
+async def get_user_by_id(
+    session: AsyncSession, user_id: str
+) -> User | None:
+    """
+    Находит пользователя по его UUID.
+
+    Args:
+        session: асинхронная сессия БД.
+        user_id: строковый UUID пользователя.
+
+    Returns:
+        Объект User или None если не найден.
+    """
+    try:
+        uid = uuid.UUID(user_id)
+    except ValueError:
+        return None
+
+    result = await session.execute(
+        select(User).where(User.id == uid)
+    )
+    return result.scalar_one_or_none()
+
+
 async def get_user_by_prefix(
     session: AsyncSession, prefix: str
 ) -> User | None:
     """
     Находит пользователя по префиксу API-ключа.
 
+    Используется только при регистрации для проверки уникальности префикса.
+
     Args:
         session: асинхронная сессия БД.
-        prefix: префикс ключа (первые 8 символов).
+        prefix: префикс ключа.
 
     Returns:
         Объект User или None если не найден.

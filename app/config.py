@@ -22,6 +22,11 @@ class Settings(BaseSettings):
     # Database
     database_url: str
 
+    # Redis
+    redis_url: str = "redis://redis:6379/0"
+    # TTL сессионного кэша (пара user_id → api_key_hash) в секундах
+    auth_cache_ttl: int = 900  # 15 минут
+
     # Security
     secret_key: str
 

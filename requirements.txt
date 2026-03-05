@@ -13,3 +13,4 @@ bcrypt>=4.1
 python-multipart>=0.0.9
 pydantic-settings>=2.2
 pypdf>=4.0
+redis[hiredis]>=5.0

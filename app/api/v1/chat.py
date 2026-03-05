@@ -9,18 +9,17 @@ import uuid
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Request, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import memory as memory_store
 from app.db.models import User
 from app.db.repository import create_message
 from app.dependencies import get_db_session, require_auth
 from app.schemas import ChatAudioResponse, ChatTextResponse, ClearMemoryResponse
 from app.services import rag, transcription, vision
-from app.core.memory import memory_manager
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Допустимые типы файлов
 ALLOWED_IMAGE_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
 ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 
@@ -44,7 +43,7 @@ async def _save_messages(
     input_type: str,
     is_filtered: bool,
 ) -> None:
-    """Фоновая задача: сохраняет пару сообщений пользователя и ассистента в БД."""
+    """Фоновая задача: сохраняет пару сообщений пользователя и ассистента в Postgres."""
     await create_message(
         session,
         user_id=user_id,
@@ -73,12 +72,13 @@ async def chat_text(
     """
     Текстовый запрос к ИИ-консультанту. Опционально с изображением.
 
-    Принимает: multipart/form-data с полями message (текст) и image (опционально).
+    Headers: X-User-ID, X-API-Key
+    Body: multipart/form-data — message (str), image (file, опционально)
     """
     logger.info(
-        "Запрос /chat/text: user_id=%s, input_type=%s",
+        "Запрос /chat/text: user_id=%s, has_image=%s",
         current_user.id,
-        "text_image" if image else "text",
+        image is not None,
     )
 
     if not message.strip():
@@ -87,7 +87,6 @@ async def chat_text(
     final_text = message
     input_type = "text"
 
-    # Обрабатываем изображение если передано
     if image is not None:
         content_type = image.content_type or ""
         ext = os.path.splitext(image.filename or "")[1].lower()
@@ -111,7 +110,6 @@ async def chat_text(
         vectorstore=vectorstore,
     )
 
-    # Записываем в БД фоновой задачей
     background_tasks.add_task(
         _save_messages,
         session,
@@ -140,15 +138,15 @@ async def chat_audio(
     """
     Аудио-запрос к ИИ-консультанту. Обязателен mp3-файл, опционально изображение.
 
-    Принимает: multipart/form-data с полями audio (mp3) и image (опционально).
+    Headers: X-User-ID, X-API-Key
+    Body: multipart/form-data — audio (mp3), image (file, опционально)
     """
     logger.info(
-        "Запрос /chat/audio: user_id=%s, input_type=%s",
+        "Запрос /chat/audio: user_id=%s, has_image=%s",
         current_user.id,
-        "audio_image" if image else "audio",
+        image is not None,
     )
 
-    # Проверяем формат аудио
     audio_content_type = audio.content_type or ""
     audio_filename = audio.filename or "audio.mp3"
     audio_ext = os.path.splitext(audio_filename)[1].lower()
@@ -164,15 +162,13 @@ async def chat_audio(
     if len(audio_bytes) > transcription.MAX_AUDIO_SIZE_BYTES:
         raise HTTPException(
             status_code=400,
-            detail=f"Файл слишком большой. Максимум 25 МБ.",
+            detail="Файл слишком большой. Максимум 25 МБ.",
         )
 
-    # Транскрибируем аудио
     transcribed_text = await transcription.transcribe(audio_bytes, audio_filename)
     final_text = transcribed_text
     input_type = "audio"
 
-    # Обрабатываем изображение если передано
     if image is not None:
         content_type = image.content_type or ""
         ext = os.path.splitext(image.filename or "")[1].lower()
@@ -195,7 +191,6 @@ async def chat_audio(
         vectorstore=vectorstore,
     )
 
-    # Записываем в БД фоновой задачей
     background_tasks.add_task(
         _save_messages,
         session,
@@ -218,8 +213,10 @@ async def clear_memory(
     current_user: User = Depends(require_auth),
 ) -> ClearMemoryResponse:
     """
-    Очищает историю диалога текущего пользователя.
+    Очищает историю диалога текущего пользователя в Redis.
+
+    Headers: X-User-ID, X-API-Key
     """
-    memory_manager.clear_memory(str(current_user.id))
+    await memory_store.clear_messages(str(current_user.id))
     logger.info("Память очищена для user_id=%s", current_user.id)
     return ClearMemoryResponse(message="История диалога очищена.")

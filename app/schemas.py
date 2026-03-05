@@ -1,5 +1,5 @@
 """
-Pydantic-схемы для запросов и ответов API.
+Pydantic v2 схемы для запросов и ответов API.
 """
 
 from pydantic import BaseModel
@@ -8,6 +8,7 @@ from pydantic import BaseModel
 class RegisterResponse(BaseModel):
     """Ответ на регистрацию пользователя."""
 
+    user_id: str
     api_key: str
     message: str
 

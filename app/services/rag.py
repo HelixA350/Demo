@@ -4,15 +4,14 @@ RAG-сервис: поиск по векторной базе + генераци
 
 import logging
 import re
-from dataclasses import dataclass
 
-from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_community.vectorstores import FAISS
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
+from pydantic import BaseModel
 
 from app.config import get_settings
-from app.core.memory import memory_manager
+from app.core import memory as memory_store
 
 logger = logging.getLogger(__name__)
 
@@ -46,8 +45,7 @@ SYSTEM_PROMPT = """Ты — ИИ-консультант, который отве
 {context}"""
 
 
-@dataclass
-class RAGResponse:
+class RAGResponse(BaseModel):
     """Ответ RAG-сервиса."""
 
     answer: str
@@ -57,10 +55,7 @@ class RAGResponse:
 
 def _is_forbidden(query: str) -> bool:
     """Проверяет запрос на запрещённые тематики."""
-    for pattern in FORBIDDEN_PATTERNS:
-        if pattern.search(query):
-            return True
-    return False
+    return any(pattern.search(query) for pattern in FORBIDDEN_PATTERNS)
 
 
 async def query(user_id: str, user_query: str, vectorstore: FAISS) -> RAGResponse:
@@ -68,7 +63,7 @@ async def query(user_id: str, user_query: str, vectorstore: FAISS) -> RAGRespons
     Выполняет RAG-запрос: поиск по векторной базе + генерация ответа.
 
     Args:
-        user_id: идентификатор пользователя (для памяти).
+        user_id: строковый UUID пользователя (ключ памяти в Redis).
         user_query: текстовый запрос пользователя.
         vectorstore: загруженный FAISS-индекс.
 
@@ -89,20 +84,18 @@ async def query(user_id: str, user_query: str, vectorstore: FAISS) -> RAGRespons
     # Поиск релевантных чанков
     docs = await vectorstore.asimilarity_search(user_query, k=4)
     source_chunks = [doc.page_content for doc in docs]
-    logger.info(
-        "Найдено %d чанков для user_id=%s", len(source_chunks), user_id
-    )
+    logger.info("Найдено %d чанков для user_id=%s", len(source_chunks), user_id)
 
-    # Формируем контекст
+    # Формируем контекст из найденных чанков
     context = "\n\n---\n\n".join(source_chunks)
 
-    # Получаем память пользователя
-    memory = memory_manager.get_memory(user_id)
-    chat_history = memory.load_memory_variables({}).get("chat_history", [])
+    # Загружаем историю диалога из Redis
+    chat_history = await memory_store.get_messages(user_id)
 
-    # Формируем сообщения
+    # Формируем список сообщений для LLM
     system_message = SystemMessage(content=SYSTEM_PROMPT.format(context=context))
-    messages = [system_message] + chat_history + [HumanMessage(content=user_query)]
+    human_message = HumanMessage(content=user_query)
+    messages = [system_message] + chat_history + [human_message]
 
     # Вызываем LLM
     llm = ChatOpenAI(
@@ -124,7 +117,8 @@ async def query(user_id: str, user_query: str, vectorstore: FAISS) -> RAGRespons
             usage.get("total_tokens"),
         )
 
-    # Сохраняем в память
-    memory.save_context({"input": user_query}, {"output": answer})
+    # Сохраняем пару сообщений в Redis с обрезкой до window_size
+    ai_message = AIMessage(content=answer)
+    await memory_store.add_messages_with_trim(user_id, human_message, ai_message)
 
     return RAGResponse(answer=answer, source_chunks=source_chunks)
