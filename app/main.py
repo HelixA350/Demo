@@ -2,6 +2,7 @@
 Точка входа FastAPI приложения с lifespan для инициализации ресурсов.
 """
 
+import asyncio
 import logging
 import logging.config
 from contextlib import asynccontextmanager
@@ -15,6 +16,7 @@ from app.api.v1 import auth, chat
 from app.config import get_settings
 from app.core.redis_client import create_redis_client
 from app.exceptions import AppError
+from app.vectorstore.builder import ensure_vectorstore_exists
 from app.vectorstore.loader import load_vectorstore
 
 # ─── Настройка логирования ────────────────────────────────────────────────────
@@ -57,10 +59,18 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     application.state.redis = redis_client
     logger.info("Redis подключён.")
 
-    # Загрузка FAISS-индекса в память
-    vectorstore = load_vectorstore(settings.vectorstore_path, settings.openai_embedding_model)
+    # Построение векторной БД если она отсутствует.
+    # build_vectorstore() и load_vectorstore() синхронные (CPU/IO bound),
+    # оборачиваем в to_thread чтобы не блокировать event loop.
+    await asyncio.to_thread(ensure_vectorstore_exists)
+
+    vectorstore = await asyncio.to_thread(
+        load_vectorstore,
+        settings.vectorstore_path,
+        settings.openai_embedding_model,
+    )
     application.state.vectorstore = vectorstore
-    logger.info("FAISS-индекс успешно загружен.")
+    logger.info("FAISS-индекс загружен в память.")
 
     yield
 

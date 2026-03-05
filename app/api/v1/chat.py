@@ -41,7 +41,6 @@ async def _save_messages(
     user_content: str,
     assistant_content: str,
     input_type: str,
-    is_filtered: bool,
 ) -> None:
     """Фоновая задача: сохраняет пару сообщений пользователя и ассистента в Postgres."""
     await create_message(
@@ -54,7 +53,7 @@ async def _save_messages(
     await create_message(
         session,
         user_id=user_id,
-        role="filtered" if is_filtered else "assistant",
+        role="assistant",
         content=assistant_content,
         input_type=input_type,
     )
@@ -115,13 +114,13 @@ async def chat_text(
         session,
         current_user.id,
         final_text,
-        rag_response.answer,
+        rag_response.content,
         input_type,
-        rag_response.is_filtered,
     )
 
     return ChatTextResponse(
-        answer=rag_response.answer,
+        content=rag_response.content,
+        used_chunk_indices=rag_response.used_chunk_indices,
         source_chunks=rag_response.source_chunks,
     )
 
@@ -196,14 +195,14 @@ async def chat_audio(
         session,
         current_user.id,
         final_text,
-        rag_response.answer,
+        rag_response.content,
         input_type,
-        rag_response.is_filtered,
     )
 
     return ChatAudioResponse(
         transcription=transcribed_text,
-        answer=rag_response.answer,
+        content=rag_response.content,
+        used_chunk_indices=rag_response.used_chunk_indices,
         source_chunks=rag_response.source_chunks,
     )
 

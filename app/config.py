@@ -23,6 +23,9 @@ class Settings(BaseSettings):
 
     # Database
     database_url: str                                       # URL для подключения к базе данных
+    POSTGRES_USER: str = "user"
+    POSTGRES_PASSWORD: str = "password"
+    POSTGRES_DB: str = "consultant"
 
     # Redis
     redis_url: str = "redis://redis:6379/0"                 # URL для подключения к Redis

@@ -13,19 +13,29 @@ class RegisterResponse(BaseModel):
     message: str
 
 
+class SourceChunk(BaseModel):
+    """Один найденный чанк из векторной базы с указанием источника."""
+
+    source: str
+    content: str
+    confidence_score: float
+
+
 class ChatTextResponse(BaseModel):
     """Ответ на текстовый/визуальный запрос."""
 
-    answer: str
-    source_chunks: list[str]
+    content: str
+    used_chunk_indices: list[int]
+    source_chunks: list[SourceChunk]
 
 
 class ChatAudioResponse(BaseModel):
     """Ответ на аудио-запрос."""
 
     transcription: str
-    answer: str
-    source_chunks: list[str]
+    content: str
+    used_chunk_indices: list[int]
+    source_chunks: list[SourceChunk]
 
 
 class ClearMemoryResponse(BaseModel):
