@@ -78,6 +78,7 @@ def build_vectorstore() -> None:
     embeddings = OpenAIEmbeddings(
         model=settings.openai_embedding_model,
         api_key=settings.openai_api_key,
+        base_url=settings.openai_base_url,
     )
 
     logger.info("Создание FAISS-индекса...")

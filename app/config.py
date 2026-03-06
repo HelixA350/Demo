@@ -15,7 +15,7 @@ class Settings(BaseSettings):
 
     # OpenAI
     openai_api_key: str                                     # Ключ для API OpenAI
-    openai_base_url: str = "https://api.openai.com/v1"      # Базовый URL API, для использования разных моделей через совместимость с OpenAI API
+    openai_base_url: str = "https://litellm.tokengate.ru/v1"# Базовый URL API, для использования разных моделей через совместимость с OpenAI API
     openai_chat_model: str = "gpt-4o"                       # Модель LLM
     openai_embedding_model: str = "text-embedding-3-small"  # Модель векторизации
     openai_whisper_model: str = "whisper-1"                 # Модель транскрибации

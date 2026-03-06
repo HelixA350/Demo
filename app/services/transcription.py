@@ -43,7 +43,7 @@ async def transcribe(audio_bytes: bytes, filename: str) -> str:
     logger.info("Транскрипция аудио: %s (%d байт)", filename, len(audio_bytes))
 
     try:
-        client = openai.AsyncOpenAI(api_key=settings.openai_api_key)
+        client = openai.AsyncOpenAI(api_key=settings.openai_api_key, base_url=settings.openai_base_url)
         response = await client.audio.transcriptions.create(
             model=settings.openai_whisper_model,
             file=(filename, audio_bytes, "audio/mpeg"),
