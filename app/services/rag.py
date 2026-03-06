@@ -16,6 +16,7 @@ from langchain_community.vectorstores import FAISS
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
+from typing import Optional
 
 from app.config import Settings, get_settings
 from app.core import memory as memory_store
@@ -41,7 +42,7 @@ SYSTEM_PROMPT = """Ты — корпоративный ИИ-консультан
 {context}
 
 ФОРМАТ ОТВЕТА — СТРОГО JSON, без каких-либо пояснений вне JSON, без markdown-обёртки:
-{{"content": "<текст ответа>", "used_chunk_indices": [<индексы использованных чанков>]}}"""
+{{"content": "<текст ответа>", "used_chunk_indices": [<список индексов использованных чанков>]}}"""
 
 
 # ─── Схемы ────────────────────────────────────────────────────────────────────
@@ -51,7 +52,7 @@ class LLMAnswer(BaseModel):
     """Структурированный ответ LLM."""
 
     content: str = Field(description="Текст ответа на вопрос пользователя.")
-    used_chunk_indices: list[int] = Field(
+    used_chunk_indices: Optional[list[int]] = Field(
         description=(
             "Список индексов чанков (0-based), которые были фактически использованы "
             "при формировании ответа. Если ни один чанк не использовался — пустой список."
