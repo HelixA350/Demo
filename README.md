@@ -68,6 +68,10 @@ Demo/
 │
 ├── data/                       # Документы-источники для базы знаний
 │   └── document.txt            # Регламенты компании (TXT или PDF)
+├──tests/                       # юнит тесты
+|   └── test_rag.py             # тест компонентов RAG
+|   └── test_repository.py      # тест CRUD через мок-сессию
+|   └── test_security.py        # тест генерация и верификация API-ключей
 │
 ├── vectorstore/                # Сохранённый FAISS-индекс (генерируется при первом запуске)
 │   ├── index.faiss             # Бинарный файл индекса
@@ -172,6 +176,13 @@ python -m app.vectorstore.builder
 
 # Или через Docker
 docker compose run --rm app python -m app.vectorstore.builder
+```
+
+### 5. Запуск тестов (опционально)
+```bash
+cd Path/to/project
+venv\Scripts\activate
+pytest tests/ -v
 ```
 
 ---
@@ -303,6 +314,6 @@ X-User-ID: <ID пользователя>
 
 Бот реализован на Aiogram 3 в отдельном репозитории и обращается к этому API:
 
-> **Репозиторий бота:** `[ссылка на репозиторий]`
+> **Репозиторий бота:** `[https://github.com/HelixA350/telegram_bot]`
 
 ---

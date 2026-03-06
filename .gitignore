@@ -25,3 +25,4 @@ vectorstore/*.pkl
 #DEV
 TODO.md
 test.md
+.pytest_cache/
