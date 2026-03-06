@@ -4,9 +4,11 @@ RAG-сервис: поиск по векторной базе + генераци
 Пайплайн разбит на три независимых шага:
   1. retrieve()        — семантический поиск чанков в FAISS
   2. build_messages()  — сборка списка сообщений (system + история + human)
-  3. generate()        — вызов LLM со structured output и сохранение пары в историю Redis
+  3. generate()        — вызов LLM и сохранение пары в историю Redis
 """
 
+import base64
+import json
 import logging
 import os
 
@@ -23,8 +25,8 @@ logger = logging.getLogger(__name__)
 
 # ─── Системный промпт ─────────────────────────────────────────────────────────
 
-SYSTEM_PROMPT = """Ты — корпоративный ИИ-консультант для сотрудников компании «ТехноИнновации». 
-Твоя задача — помогать коллегам с вопросами о компании, внутренних процессах и работе в ней, 
+SYSTEM_PROMPT = """Ты — корпоративный ИИ-консультант для сотрудников компании «ТехноИнновации».
+Твоя задача — помогать коллегам с вопросами о компании, внутренних процессах и работе в ней,
 используя исключительно предоставленные документы.
 
 Твои правила:
@@ -36,10 +38,13 @@ SYSTEM_PROMPT = """Ты — корпоративный ИИ-консультан
 6. Если вопрос касается насилия, оружия, самоповреждения, террора или других опасных тем — вежливо откажись отвечать и предложи задать вопрос по теме документа.
 
 Контекст из документа (чанки пронумерованы с 0):
-{context}"""
+{context}
+
+ФОРМАТ ОТВЕТА — СТРОГО JSON, без каких-либо пояснений вне JSON, без markdown-обёртки:
+{{"content": "<текст ответа>", "used_chunk_indices": [<индексы использованных чанков>]}}"""
 
 
-# ─── Structured output схема ──────────────────────────────────────────────────
+# ─── Схемы ────────────────────────────────────────────────────────────────────
 
 
 class LLMAnswer(BaseModel):
@@ -52,9 +57,6 @@ class LLMAnswer(BaseModel):
             "при формировании ответа. Если ни один чанк не использовался — пустой список."
         )
     )
-
-
-# ─── Модель ответа сервиса ────────────────────────────────────────────────────
 
 
 class RAGResponse(BaseModel):
@@ -71,15 +73,6 @@ class RAGResponse(BaseModel):
 async def retrieve(user_query: str, vectorstore: FAISS, k: int = 4) -> list[SourceChunk]:
     """
     Выполняет семантический поиск в FAISS и возвращает список чанков с метаданными.
-
-    Поле source берётся из doc.metadata["source"], которое LangChain-загрузчики
-    (PyPDFLoader, TextLoader) проставляют автоматически как путь к исходному файлу.
-    В ответе оставляем только имя файла без пути — удобнее для клиента.
-
-    confidence_score вычисляется через similarity_search_with_relevance_scores:
-    LangChain нормализует скор в [0, 1] с учётом типа метрики индекса (L2 или cosine),
-    где 1.0 = идеальное совпадение.
-    Скор округляется до 4 знаков после запятой.
 
     Args:
         user_query: текстовый запрос пользователя.
@@ -109,24 +102,29 @@ async def retrieve(user_query: str, vectorstore: FAISS, k: int = 4) -> list[Sour
     return chunks
 
 
-# ─── Шаг 2: Context enrichment & prompt assembly ─────────────────────────────
+# ─── Шаг 2: Подготовка контекста ─────────────────────────────
 
 
 async def build_messages(
     user_query: str,
     source_chunks: list[SourceChunk],
     user_id: str,
+    image_bytes: bytes | None = None,
+    image_media_type: str = "image/jpeg",
 ) -> list[BaseMessage]:
     """
     Собирает список сообщений для LLM: system prompt с пронумерованными чанками,
     история диалога пользователя из Redis, текущий human message.
 
-    Чанки нумеруются с 0 — модель ссылается на них по индексу в used_chunk_indices.
+    Если переданы image_bytes — формирует multipart HumanMessage с текстом и картинкой,
+    которую модель получает напрямую (без предварительного распознавания).
 
     Args:
         user_query: текущий вопрос пользователя.
         source_chunks: чанки из FAISS, образующие контекст.
         user_id: UUID пользователя (ключ истории в Redis).
+        image_bytes: байты изображения или None.
+        image_media_type: MIME-тип изображения.
 
     Returns:
         Список BaseMessage готовый к передаче в LLM.
@@ -137,7 +135,20 @@ async def build_messages(
     system_message = SystemMessage(content=SYSTEM_PROMPT.format(context=numbered))
 
     chat_history = await memory_store.get_messages(user_id)
-    human_message = HumanMessage(content=user_query)
+
+    if image_bytes is not None:
+        b64 = base64.b64encode(image_bytes).decode("utf-8")
+        data_uri = f"data:{image_media_type};base64,{b64}"
+        human_message = HumanMessage(content=[
+            {"type": "text", "text": user_query},
+            {"type": "image_url", "image_url": {"url": data_uri}},
+        ])
+        logger.info(
+            "build_messages: добавлено изображение (%s, %d байт)",
+            image_media_type, len(image_bytes),
+        )
+    else:
+        human_message = HumanMessage(content=user_query)
 
     logger.debug(
         "build_messages: history=%d msgs, context_chunks=%d для user_id=%s",
@@ -149,24 +160,17 @@ async def build_messages(
     return [system_message, *chat_history, human_message]
 
 
-# ─── Шаг 3: Generation ───────────────────────────────────────────────────────
+# ─── Шаг 3: генерация ───────────────────────────────────────────────────────
 
 
 def _build_llm(settings: Settings) -> ChatOpenAI:
-    """
-    Создаёт экземпляр ChatOpenAI с параметрами из настроек.
-
-    Args:
-        settings: объект Settings приложения.
-
-    Returns:
-        Настроенный экземпляр ChatOpenAI.
-    """
+    """Создаёт экземпляр ChatOpenAI с параметрами из настроек."""
     return ChatOpenAI(
         model=settings.openai_chat_model,
         api_key=settings.openai_api_key,
         base_url=settings.openai_base_url,
         max_tokens=settings.openai_max_tokens,
+        temperature=0.3,
     )
 
 
@@ -177,8 +181,8 @@ async def generate(
     settings: Settings,
 ) -> LLMAnswer:
     """
-    Вызывает LLM через with_structured_output, логирует токены
-    и сохраняет пару (human + AI) в историю Redis.
+    Вызывает LLM напрямую, парсит JSON из ответа вручную,
+    сохраняет пару (human + AI) в историю Redis.
 
     Args:
         user_id: UUID пользователя (для сохранения в память).
@@ -189,20 +193,28 @@ async def generate(
     Returns:
         LLMAnswer со структурированным ответом модели.
     """
-    llm = _build_llm(settings).with_structured_output(LLMAnswer, include_raw=True)
+    llm = _build_llm(settings)
 
     logger.info("LLM запрос: модель=%s, user_id=%s", settings.openai_chat_model, user_id)
-    raw = await llm.ainvoke(messages)
+    raw_message = await llm.ainvoke(messages)
 
-    # include_raw=True возвращает dict: {"raw": AIMessage, "parsed": LLMAnswer, "parsing_error": ...}
-    answer: LLMAnswer = raw["parsed"]
+    raw_content: str = getattr(raw_message, "content", "") or ""
+    logger.info("[RAW] content=%r", raw_content)
 
-    if raw.get("parsing_error"):
-        logger.warning("Ошибка парсинга structured output: %s", raw["parsing_error"])
+    # Убираем markdown-обёртку ```json ... ``` если модель её добавила
+    cleaned = raw_content.strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
 
-    # Логируем токены из raw AIMessage
-    raw_message = raw.get("raw")
-    if raw_message and hasattr(raw_message, "usage_metadata") and raw_message.usage_metadata:
+    try:
+        data = json.loads(cleaned)
+        answer = LLMAnswer(**data)
+    except Exception as e:
+        logger.error("Не удалось распарсить JSON: %s | cleaned=%r", e, cleaned)
+        raise ValueError(f"LLM вернул невалидный JSON: {e}") from e
+
+    # Логируем токены
+    if hasattr(raw_message, "usage_metadata") and raw_message.usage_metadata:
         usage = raw_message.usage_metadata
         logger.info(
             "Токены — входные: %s, выходные: %s, всего: %s",
@@ -211,7 +223,7 @@ async def generate(
             usage.get("total_tokens"),
         )
 
-    # Сохраняем в историю Redis — используем content как текст ответа
+    # Сохраняем в историю Redis
     ai_message = AIMessage(content=answer.content)
     await memory_store.add_messages_with_trim(user_id, human_message, ai_message)
 
@@ -221,14 +233,22 @@ async def generate(
 # ─── Публичный интерфейс ──────────────────────────────────────────────────────
 
 
-async def query(user_id: str, user_query: str, vectorstore: FAISS) -> RAGResponse:
+async def query(
+    user_id: str,
+    user_query: str,
+    vectorstore: FAISS,
+    image_bytes: bytes | None = None,
+    image_media_type: str = "image/jpeg",
+) -> RAGResponse:
     """
     Оркестрирует полный RAG-пайплайн: retrieve -> build_messages -> generate.
 
     Args:
         user_id: строковый UUID пользователя.
-        user_query: текстовый запрос (уже с описанием изображения/транскрипцией если нужно).
+        user_query: текстовый запрос пользователя.
         vectorstore: загруженный FAISS-индекс.
+        image_bytes: байты изображения или None.
+        image_media_type: MIME-тип изображения.
 
     Returns:
         RAGResponse с ответом модели, индексами использованных чанков и всеми чанками.
@@ -236,7 +256,11 @@ async def query(user_id: str, user_query: str, vectorstore: FAISS) -> RAGRespons
     settings = get_settings()
 
     source_chunks = await retrieve(user_query, vectorstore)
-    messages = await build_messages(user_query, source_chunks, user_id)
+    messages = await build_messages(
+        user_query, source_chunks, user_id,
+        image_bytes=image_bytes,
+        image_media_type=image_media_type,
+    )
 
     human_message: HumanMessage = messages[-1]
 

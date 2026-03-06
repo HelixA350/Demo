@@ -59,6 +59,19 @@ async def _save_messages(
     )
 
 
+def _validate_image(image: UploadFile) -> str:
+    """Проверяет тип изображения, возвращает media_type. Кидает HTTPException если невалидно."""
+    content_type = image.content_type or ""
+    ext = os.path.splitext(image.filename or "")[1].lower()
+    if content_type not in ALLOWED_IMAGE_CONTENT_TYPES and ext not in ALLOWED_IMAGE_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Неподдерживаемый тип изображения: {content_type}. "
+                   f"Поддерживаются: jpeg, png, webp, gif.",
+        )
+    return content_type or "image/jpeg"
+
+
 @router.post("/text", response_model=ChatTextResponse)
 async def chat_text(
     request: Request,
@@ -83,37 +96,33 @@ async def chat_text(
     if not message.strip():
         raise HTTPException(status_code=400, detail="Сообщение не может быть пустым.")
 
-    final_text = message
+    image_bytes: bytes | None = None
+    image_media_type: str = "image/jpeg"
     input_type = "text"
+    retrieve_query = message
 
     if image is not None:
-        content_type = image.content_type or ""
-        ext = os.path.splitext(image.filename or "")[1].lower()
-
-        if content_type not in ALLOWED_IMAGE_CONTENT_TYPES and ext not in ALLOWED_IMAGE_EXTENSIONS:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Неподдерживаемый тип изображения: {content_type}. "
-                       f"Поддерживаются: jpeg, png, webp, gif.",
-            )
-
+        image_media_type = _validate_image(image)
         image_bytes = await image.read()
-        image_description = await vision.describe(image_bytes, content_type or "image/jpeg")
-        final_text = f"{message}\n\n[Изображение: {image_description}]"
         input_type = "text_image"
+        image_description = await vision.describe(image_bytes, image_media_type)
+        retrieve_query = f"{message}\n\n[Изображение: {image_description}]"
+        logger.info("Vision description для retrieval: %r", image_description[:200])
 
     vectorstore = _get_vectorstore(request)
     rag_response = await rag.query(
         user_id=str(current_user.id),
-        user_query=final_text,
+        user_query=retrieve_query,
         vectorstore=vectorstore,
+        image_bytes=image_bytes,
+        image_media_type=image_media_type,
     )
 
     background_tasks.add_task(
         _save_messages,
         session,
         current_user.id,
-        final_text,
+        message,
         rag_response.content,
         input_type,
     )
@@ -165,36 +174,34 @@ async def chat_audio(
         )
 
     transcribed_text = await transcription.transcribe(audio_bytes, audio_filename)
-    final_text = transcribed_text
     input_type = "audio"
 
+    image_bytes: bytes | None = None
+    image_media_type: str = "image/jpeg"
+    retrieve_query = transcribed_text
+
     if image is not None:
-        content_type = image.content_type or ""
-        ext = os.path.splitext(image.filename or "")[1].lower()
-
-        if content_type not in ALLOWED_IMAGE_CONTENT_TYPES and ext not in ALLOWED_IMAGE_EXTENSIONS:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Неподдерживаемый тип изображения: {content_type}.",
-            )
-
+        image_media_type = _validate_image(image)
         image_bytes = await image.read()
-        image_description = await vision.describe(image_bytes, content_type or "image/jpeg")
-        final_text = f"{transcribed_text}\n\n[Изображение: {image_description}]"
         input_type = "audio_image"
+        image_description = await vision.describe(image_bytes, image_media_type)
+        retrieve_query = f"{transcribed_text}\n\n[Изображение: {image_description}]"
+        logger.info("Vision description для retrieval: %r", image_description[:200])
 
     vectorstore = _get_vectorstore(request)
     rag_response = await rag.query(
         user_id=str(current_user.id),
-        user_query=final_text,
+        user_query=retrieve_query,
         vectorstore=vectorstore,
+        image_bytes=image_bytes,
+        image_media_type=image_media_type,
     )
 
     background_tasks.add_task(
         _save_messages,
         session,
         current_user.id,
-        final_text,
+        transcribed_text,
         rag_response.content,
         input_type,
     )
